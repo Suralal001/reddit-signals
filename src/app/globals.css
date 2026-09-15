@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/*
+ * Reddit Sonar UI tokens. Light-first internal tool; roles rather than raw hex
+ * so a dark theme can be added by redefining these under a media query.
+ */
+:root {
+  color-scheme: light;
+  --page: #f6f6f3;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --hairline: #e1e0d9;
+  --ring: rgba(11, 11, 11, 0.1);
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --accent-soft: #e6f0fc;
+  --hot: #d03b3b;
+  --hot-soft: #fbe9e9;
+  --warm: #c98500;
+  --warm-soft: #fdf3dc;
+  --cool: #898781;
+  --cool-soft: #efeeea;
+  --pos: #2a78d6;
+  --neu: #c3c2b7;
+  --neg: #e34948;
+  --good: #006300;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hairline: var(--hairline);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-hot: var(--hot);
+  --color-hot-soft: var(--hot-soft);
+  --color-warm: var(--warm);
+  --color-warm-soft: var(--warm-soft);
+  --color-cool: var(--cool);
+  --color-cool-soft: var(--cool-soft);
+  --color-pos: var(--pos);
+  --color-neu: var(--neu);
+  --color-neg: var(--neg);
+  --color-good: var(--good);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@utility btn {
+  @apply inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+@utility card {
+  @apply rounded-xl border border-hairline bg-surface;
+}
+@utility input {
+  @apply w-full rounded-lg border border-hairline bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20;
+}
+@utility label {
+  @apply mb-1 block text-xs font-medium text-ink-2;
+}
+@utility hint {
+  @apply mt-1 text-xs text-ink-3;
+}
+@utility chip {
+  @apply inline-flex items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-xs text-ink-2;
+}
+@utility btn-primary {
+  @apply btn bg-accent text-white hover:bg-accent-ink;
+}
+@utility btn-secondary {
+  @apply btn border border-hairline bg-surface text-ink hover:bg-surface-2;
+}
+@utility btn-ghost {
+  @apply btn text-ink-2 hover:bg-surface-2 hover:text-ink;
+}
+
+.prose-reddit {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}

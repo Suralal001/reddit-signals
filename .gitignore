@@ -1,0 +1,26 @@
+node_modules
+.next
+out
+build
+
+# Local databases. The deployed one lives in a Docker volume.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+
+.env
+.env.local
+.env*.local
+
+# Frozen at build time from PROJECT_DEFAULTS.
+prisma/seed.json
+
+.DS_Store
+*.pem
+npm-debug.log*
+yarn-error.log*
+.vercel
+next-env.d.ts
+_to_delete/

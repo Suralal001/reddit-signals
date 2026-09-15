@@ -1,0 +1,461 @@
+// Reddit Sonar — data model
+// SQLite for the MVP. To move to Postgres: change `provider` here, swap the
+// adapter in src/lib/db.ts, and re-run `prisma migrate dev`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// A workspace/brand being tracked (e.g. DryDock AI, Chordian AI).
+model Project {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  createdAt DateTime  @default(now())
+  monitors  Monitor[]
+  settings  Settings?
+  subredditRules SubredditRule[]
+  operators SubredditOperator[]
+  people    Person[]
+  accounts  Account[]
+  handles   PersonHandle[]
+  apifyActors ApifyActor[]
+}
+
+/// Per-project workspace configuration.
+model Settings {
+  id             String   @id @default(cuid())
+  projectId      String   @unique
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  brandName      String   @default("")
+  productDesc    String   @default("")
+  audience       String   @default("")
+  voice          String   @default("")
+  competitors    String   @default("[]") // JSON string[]
+  alertThreshold Int      @default(70)
+  slackWebhook   String   @default("")
+  lookbackDays   Int      @default(3)
+  dailyReplyCap  Int      @default(5)
+  /// The one asset that is shared across every subreddit and cannot be replaced
+  /// if it gets filtered sitewide. Links to it are budgeted globally, not per sub.
+  brandDomain     String  @default("")
+  domainLinkCap7d Int     @default(2)
+  playbook       String   @default("{}") // JSON: PlaybookData (see src/lib/playbook.ts)
+  updatedAt      DateTime @updatedAt
+}
+
+/// Per-subreddit promotion policy, used by the drafter and the pre-post lint.
+model SubredditRule {
+  id        String   @id @default(cuid())
+  projectId String   @default("proj_drydock")
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  platform  String   @default("REDDIT") // see PLATFORMS in src/lib/sources/types.ts
+  name      String   // channel: subreddit, "hn", "producthunt", owner/repo, SO tag
+  policy    String   @default("DISCLOSE") // OPEN | DISCLOSE | VALUE_ONLY | NO_PROMO
+  notes     String   @default("")
+  verified  Boolean  @default(false) // rule text checked against the sidebar
+  updatedAt DateTime @updatedAt
+
+  // ---- Standing with the moderators -------------------------------------
+  // WATCH_ONLY  never reply here at all (medical subs, minors, wrong audience)
+  // UNVERIFIED  nobody has read the sidebar yet — the safe default
+  // READ_ONLY   sidebar read, we may reply but have not asked to name the brand
+  // ASK_PENDING modmail sent, waiting
+  // APPROVED    mods said yes
+  // CONDITIONAL mods said yes with conditions (see `conditions`)
+  // REFUSED     mods said no — never ask again
+  // BANNED      we are banned here
+  state          String    @default("UNVERIFIED")
+  rulesUrl       String    @default("")
+  verifiedAt     DateTime?
+  verifiedBy     String    @default("")
+  recheckDueAt   DateTime? // sidebars change; re-read on this date
+  modHandles     String    @default("[]") // JSON string[] — public mod usernames only
+  conditions     String    @default("") // exactly what the mods permitted
+  approvedUser   Boolean   @default(false) // approved-submitter: exempt from crowd control
+  requiredFlair  String    @default("")
+  promoThread    String    @default("") // "Weekly self-promo thread, Fridays"
+
+  // Observed AutoModerator gates. AutoMod `remove` is silent to the author, so
+  // a reply below these thresholds simply vanishes and looks like it posted.
+  minAccountAgeDays Int?
+  minCommentKarma   Int?
+  linksAllowed      Boolean @default(false)
+  mentionCap30d     Int     @default(2) // brand-naming replies allowed here per 30 days
+
+  cooldownUntil  DateTime?
+  cooldownReason String    @default("")
+
+  outreach  ModOutreach[]
+
+  @@unique([projectId, platform, name])
+  @@index([projectId])
+  @@index([projectId, state])
+}
+
+/// One permission request to a subreddit's mod team. Drafted here, sent by a
+/// human from their own account — the app never messages anyone. Reddit's spam
+/// policy names unsolicited bulk messages explicitly, so a templated pitch sent
+/// to twenty mod teams in an afternoon is a sitewide-actionable spam pattern,
+/// not merely bad manners.
+model ModOutreach {
+  id         String   @id @default(cuid())
+  ruleId     String
+  rule       SubredditRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  projectId  String
+  channel    String
+  operatorId String? // who is sending it, under their own name
+  subject    String   @default("")
+  body       String   @default("")
+  outcome    String   @default("DRAFT") // DRAFT | SENT | APPROVED | CONDITIONAL | REFUSED | NO_REPLY
+  draftedAt  DateTime @default(now())
+  sentAt     DateTime?
+  answeredAt DateTime?
+  answer     String   @default("")
+
+  @@index([projectId, sentAt])
+  @@index([ruleId])
+}
+
+/// Anything a moderator, AutoModerator or the spam filter did to us. This is the
+/// memory the circuit breakers run on: a removal we forget about is a removal we
+/// repeat.
+model ChannelIncident {
+  id         String   @id @default(cuid())
+  projectId  String
+  platform   String   @default("REDDIT")
+  channel    String
+  // REMOVAL | SHADOW_REMOVAL | AUTOMOD_FILTER | SUB_BAN | MOD_WARNING
+  // | DOMAIN_BAN | ACCOUNT_SUSPENSION
+  kind       String
+  operatorId String?
+  replyId    String?
+  detail     String   @default("")
+  at         DateTime @default(now())
+  resolvedAt DateTime?
+  resolvedNote String @default("")
+
+  @@index([projectId, channel, at])
+  @@index([projectId, kind, at])
+}
+
+/// A saved search: what to watch for, and where.
+model Monitor {
+  id         String   @id @default(cuid())
+  projectId  String   @default("proj_drydock")
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  kind       String   @default("LEAD") // LEAD | BRAND | COMPETITOR
+  keywords   String   @default("[]") // JSON string[]
+  subreddits String   @default("[]") // JSON string[]; empty = all of Reddit
+  platforms  String   @default("[\"REDDIT\"]") // JSON string[]: which sources to run this on
+  sources    String   @default("{}") // JSON {platform: string[]} scope for non-Reddit sources
+  scanComments Boolean @default(true) // also watch new comments in those subreddits
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  leads      Lead[]
+
+  @@index([projectId])
+}
+
+/// A Reddit post (kind POST, id = bare post id) or comment (kind COMMENT,
+/// id = "t1_<id>") we've fetched at least once. For comments, `title` is the
+/// parent post's title and `body` is the comment text.
+model Thread {
+  id          String   @id // platform-prefixed for non-Reddit sources, e.g. hn_38290123
+  platform    String   @default("REDDIT")
+  kind        String   @default("POST") // POST | COMMENT
+  linkId      String? // comments: bare id of the parent post
+  linkTitle   String? // comments: parent post title
+  parentId    String? // comments: immediate parent fullname (t1_/t3_)
+  subreddit   String
+  title       String
+  body        String   @default("")
+  author      String
+  permalink   String
+  url         String
+  score       Int      @default(0)
+  numComments Int      @default(0)
+  createdUtc  DateTime
+  fetchedAt   DateTime @default(now())
+  leads       Lead[]
+}
+
+/// A thread matched by a monitor, plus the AI's read on it.
+model Lead {
+  id              String    @id @default(cuid())
+  threadId        String
+  monitorId       String
+  thread          Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  monitor         Monitor   @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  matchedKeywords String    @default("[]") // JSON string[]
+  relevance       Int? // 0-100: is this about what the monitor is for?
+  intentScore     Int? // 0-100: buying / seeking-a-solution intent
+  intentReason    String?
+  sentiment       String? // POSITIVE | NEUTRAL | NEGATIVE | MIXED
+  summary         String?
+  angle           String? // suggested reply angle
+  signal          String? // buying-signal type, see SIGNALS in src/lib/playbook.ts
+  status          String    @default("NEW") // NEW | SAVED | REPLIED | DISMISSED
+  personId        String?
+  person          Person?   @relation(fields: [personId], references: [id], onDelete: SetNull)
+  assignedOperatorId String?
+  assignedOperator   SubredditOperator? @relation("LeadAssignee", fields: [assignedOperatorId], references: [id], onDelete: SetNull)
+  scoredAt        DateTime?
+  alertedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  replies         Reply[]
+
+  @@unique([threadId, monitorId])
+  @@index([status, intentScore])
+}
+
+/// A reply drafted for a lead. Only posted after a human approves it.
+model Reply {
+  id        String    @id @default(cuid())
+  leadId    String
+  lead      Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  operatorId String?
+  operator   SubredditOperator? @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+  body      String
+  status    String    @default("DRAFT") // DRAFT | POSTED | FAILED
+  redditId  String?
+  permalink String?
+  error     String?
+  createdAt DateTime  @default(now())
+  postedAt  DateTime?
+  // Performance, refreshed by the poller for ~14 days after posting
+  score      Int?
+  replyCount Int?
+  removed    Boolean   @default(false)
+  checkedAt  DateTime?
+  /// Shadow-removal check. A removed comment still looks normal to the account
+  /// that wrote it, so the authenticated read the stats poll does will happily
+  /// report a comment that nobody else can see. These two come from an
+  /// unauthenticated fetch of the same permalink.
+  publicCheckedAt DateTime?
+  publiclyVisible Boolean?
+  /// Set when an operator posted through a blocked gate. The reason is required.
+  gateOverride    String    @default("")
+  stats      ReplyStat[]
+}
+
+/// Point-in-time snapshot of a posted reply's score, for trend lines.
+model ReplyStat {
+  id         String   @id @default(cuid())
+  replyId    String
+  reply      Reply    @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  score      Int
+  replyCount Int
+  at         DateTime @default(now())
+
+  @@index([replyId, at])
+}
+
+/// One execution of the polling pipeline, for observability.
+model PollRun {
+  id          String    @id @default(cuid())
+  /** The project this run was scoped to; null means every project (cron). */
+  projectId   String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  threadsSeen Int       @default(0)
+  newLeads    Int       @default(0)
+  scored      Int       @default(0)
+  alerts      Int       @default(0)
+  error       String?
+
+  @@index([projectId, startedAt])
+}
+
+/// A REAL, named person who replies on a platform under their own account.
+/// Never a persona or a burner: one row per human per platform. Credentials
+/// live in the environment (see envKey), never in this database.
+model SubredditOperator {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name          String   // the person, e.g. "Oliver"
+  platform      String   @default("REDDIT")
+  handle        String   // u/handle, HN username, GitHub login
+  envKey        String   @default("") // suffix for REDDIT_OP_<envKey>_* env vars
+  active        Boolean  @default(true)
+  dailyCap      Int      @default(3)
+  expertise     String   @default("[]") // JSON string[]: channels/topics this person is credible in
+  notes         String   @default("")
+
+  // Health, refreshed by the poller from public endpoints only.
+  karma         Int?
+  accountAgeDays Int?
+  lastCheckedAt DateTime?
+  lastPostedAt  DateTime?
+  healthNote    String   @default("")
+  shadowbanRisk String   @default("OK") // OK | WATCH | LIKELY
+  warmedUntil   DateTime? // no product mentions before this date
+
+  createdAt     DateTime @default(now())
+  replies       Reply[]
+  assignedLeads Lead[]   @relation("LeadAssignee")
+  checks        OperatorCheck[]
+
+  @@unique([projectId, platform, handle])
+  @@index([projectId])
+}
+
+/// Point-in-time health snapshot for one operator, for trend lines.
+model OperatorCheck {
+  id           String   @id @default(cuid())
+  operatorId   String
+  operator     SubredditOperator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  karma        Int
+  posted       Int      // replies posted in the window
+  removed      Int      // of those, removed by mods/spam filter
+  medianScore  Int
+  visible      Boolean  @default(true) // public profile reachable (shadowban probe)
+  at           DateTime @default(now())
+
+  @@index([operatorId, at])
+}
+
+/// A real human we have seen posting, across every platform they use.
+///
+/// Only ever built from what people published themselves: the handle they post
+/// under, the display name that handle shows, and a link to that public
+/// profile. No email harvesting, no enrichment scraping, no de-anonymising
+/// website visitors — that boundary is the point of this model, not an
+/// oversight. Cross-platform links are suggested and confirmed by a human;
+/// nothing is merged on a guess.
+model Person {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  displayName String    @default("")
+  accountId   String?
+  account     Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  stage       String    @default("SEEN") // SEEN | ENGAGED | CONVERSING | QUALIFIED | HANDED_OFF | DISQUALIFIED
+  notes       String    @default("")
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  handles     PersonHandle[]
+  leads       Lead[]
+
+  @@index([projectId])
+  @@index([projectId, stage])
+}
+
+/// One platform identity belonging to a Person. The unique key is what makes
+/// identity resolution safe: within a project, a given handle on a given
+/// platform maps to exactly one person, by exact match only.
+model PersonHandle {
+  id          String   @id @default(cuid())
+  personId    String
+  person      Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  platform    String
+  handle      String
+  profileUrl  String   @default("")
+  confidence  String   @default("OBSERVED") // OBSERVED (seen posting) | CONFIRMED (a human vouched)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([projectId, platform, handle])
+  @@index([personId])
+}
+
+/// The company a person belongs to. Filled in by hand or from what they say
+/// about themselves in public — never inferred from tracking.
+model Account {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  domain    String   @default("")
+  segment   String   @default("") // e.g. legal, consulting, platform team
+  notes     String   @default("")
+  createdAt DateTime @default(now())
+  people    Person[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+/// An Apify Actor this project runs to reach a source the built-in adapters
+/// can't: X/Twitter, G2 and Capterra reviews, YouTube comments, search results.
+///
+/// Deliberately configuration, not code: actor ids change, and hardcoding them
+/// would rot. `input` is a JSON template ({{keywords}}, {{since}}, {{limit}})
+/// and `mapping` says which fields of the actor's output become which fields
+/// of a lead, so a new actor needs no new code.
+///
+/// Two limits are enforced in code, not convention: actors whose id mentions
+/// LinkedIn are refused outright, and anything that looks like an email address
+/// or phone number is stripped before storage.
+model ApifyActor {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name          String   // "G2 reviews — Mem0"
+  actorId       String   // "username~actor-name" or the raw actor id
+  channel       String   @default("") // channel label, used for policy + display
+  input         String   @default("{}") // JSON template passed as the Actor INPUT
+  urlPattern    String   @default("") // for actors that take search URLs; {kw} per keyword
+  mapping       String   @default("{}") // JSON: which output fields map to a lead
+  cadenceHours  Int      @default(24)
+  maxRunsPerDay Int      @default(2)
+  maxItems      Int      @default(100)
+  timeoutSecs   Int      @default(120)
+  active        Boolean  @default(true)
+  riskAccepted  Boolean  @default(false) // recorded sign-off, required by actorRisk ACKNOWLEDGE
+  lastRunAt     DateTime?
+  lastItems     Int      @default(0)
+  lastError     String   @default("")
+  runsToday     Int      @default(0)
+  runDate       String   @default("") // YYYY-MM-DD the counter belongs to
+  createdAt     DateTime @default(now())
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+/// ---- Access control ---------------------------------------------------------
+/// This app posts in public under real people's Reddit accounts and records who
+/// overrode a moderation block. A shared password would make every one of those
+/// records say "someone", so accounts are per person.
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String    @default("")
+  passwordHash String
+  /// ADMIN may add and disable users. MEMBER may do everything else.
+  role         String    @default("MEMBER")
+  disabled     Boolean   @default(false)
+  /// Set when an admin resets a password: the user must choose a new one.
+  mustChange   Boolean   @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+
+  @@index([email])
+}
+
+/// Server-side sessions. The cookie holds an opaque id plus an HMAC, so the
+/// middleware can reject a forged cookie without touching the database and a
+/// real logout actually ends the session everywhere.
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String   @default("")
+  ip        String   @default("")
+
+  @@index([userId])
+  @@index([expiresAt])
+}

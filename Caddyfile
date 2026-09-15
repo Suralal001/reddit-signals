@@ -1,0 +1,23 @@
+# TLS, HTTP/3 and certificate renewal are Caddy's defaults; there is nothing to
+# configure for them beyond a domain that resolves to this host.
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# The app sets its own session cookie with Secure and HttpOnly; these are
+	# the headers it cannot set for itself.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# The scheduler calls this over the internal network, so nothing outside
+	# needs it. Blocking it here means a leaked CRON_SECRET is not enough on
+	# its own to make the app poll from the public internet.
+	@cron path /api/cron/*
+	respond @cron 404
+
+	reverse_proxy app:3000
+}

@@ -1,0 +1,70 @@
+# Reddit Signals — DryDock AI.
+#
+# Three containers: the app, Caddy in front of it for TLS, and a scheduler that
+# does nothing but call the poll endpoint. The scheduler is a separate container
+# rather than a thread inside the app because that keeps exactly one process
+# writing to the SQLite file, which is the whole reason a single-file database
+# is a reasonable choice here.
+
+services:
+  app:
+    build: .
+    image: reddit-signals:latest
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DATABASE_URL: file:/data/app.db
+    volumes:
+      - data:/data
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Set APP_DOMAIN in .env. Caddy gets a Let's Encrypt certificate for it
+      # automatically; point the DNS A record at this host first, or the
+      # challenge fails and you get a self-signed certificate instead.
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  scheduler:
+    image: reddit-signals:latest
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    env_file: [.env]
+    entrypoint: ["/bin/sh", "-c"]
+    # Calls the same endpoint an external cron would. Keeping it to HTTP means
+    # it holds no database handle and cannot contend with the app for the write
+    # lock; if the app is down, the curl simply fails and it tries again.
+    command: >
+      'while true; do
+         sleep "$${POLL_INTERVAL_MINUTES:-30}m";
+         echo "[scheduler] polling $$(date -Is)";
+         curl -fsS -m 300 -H "Authorization: Bearer $${CRON_SECRET}" http://app:3000/api/cron/poll
+           || echo "[scheduler] poll failed";
+       done'
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

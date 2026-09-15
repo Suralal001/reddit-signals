@@ -1,0 +1,49 @@
+{
+  "name": "reddit-signals",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx scripts/export-defaults.ts && node scripts/seed.mjs",
+    "db:studio": "prisma studio",
+    "setup": "npm run db:generate && npm run db:migrate && npm run db:seed",
+    "poll": "tsx scripts/poll.ts",
+    "poll:watch": "tsx scripts/poll.ts --watch",
+    "db:export-defaults": "tsx scripts/export-defaults.ts",
+    "user:create": "node scripts/create-user.mjs",
+    "docker:build": "docker build -t reddit-signals:latest .",
+    "docker:up": "docker compose up -d --build",
+    "docker:logs": "docker compose logs -f app"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "@prisma/adapter-better-sqlite3": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "prisma": "^7.10.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  }
+}
