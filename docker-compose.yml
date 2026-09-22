@@ -55,16 +55,17 @@ services:
         condition: service_healthy
     env_file: [.env]
     entrypoint: ["/bin/sh", "-c"]
-    # Calls the same endpoint an external cron would. Keeping it to HTTP means
-    # it holds no database handle and cannot contend with the app for the write
-    # lock; if the app is down, the curl simply fails and it tries again.
-    command: >
-      'while true; do
-         sleep "$${POLL_INTERVAL_MINUTES:-30}m";
-         echo "[scheduler] polling $$(date -Is)";
-         curl -fsS -m 300 -H "Authorization: Bearer $${CRON_SECRET}" http://app:3000/api/cron/poll
-           || echo "[scheduler] poll failed";
-       done'
+    # Must be a one-element list so the whole script is a single argument to
+    # `sh -c`. A folded string gets word-split and leaves `||` as its own
+    # argv entry, which dash rejects with: Syntax error: "||" unexpected
+    command:
+      - |
+        while true; do
+          sleep "$${POLL_INTERVAL_MINUTES:-30}m"
+          echo "[scheduler] polling $$(date -Is)"
+          curl -fsS -m 300 -H "Authorization: Bearer $${CRON_SECRET}" http://app:3000/api/cron/poll \
+            || echo "[scheduler] poll failed"
+        done
 
 volumes:
   data:
