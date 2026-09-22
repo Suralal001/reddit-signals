@@ -52,7 +52,10 @@ keywords, so a mock poll actually returns something.
 ## Deploying to a VPS
 
 Anything that runs Docker will do — Hetzner CX22, a DigitalOcean droplet, a
-small EC2 instance. Two vCPU and 2 GB of RAM is comfortable.
+small EC2 instance. Two vCPU and 2 GB of RAM is comfortable **to run**. Do not
+run `next build` on a 2 GB box — Next.js 16 (Turbopack) will thrash or hang at
+"Creating an optimized production build". Build the image in CI (or on a larger
+machine) and pull it on the VPS instead.
 
 **1. Point DNS at the box first.** Caddy asks Let's Encrypt for a certificate on
 first boot, and the challenge fails if `APP_DOMAIN` does not already resolve to
@@ -69,10 +72,16 @@ $EDITOR .env          # AUTH_SECRET, APP_DOMAIN, CRON_SECRET, ANTHROPIC_API_KEY,
 
 **3. Start it.**
 
+First boot only — if the instance has enough RAM (≥4 GB recommended), or you
+have already built the image elsewhere:
+
 ```bash
 docker compose up -d --build
 docker compose logs -f app
 ```
+
+On a small EC2, skip `--build` and use the image from GitHub Actions (see below)
+or build on your laptop and `docker save | ssh … docker load`.
 
 The first boot applies every migration, seeds the DryDock workspace, and — if
 `ADMIN_EMAIL` is set — creates the first admin and prints a one-time password to
@@ -112,14 +121,18 @@ docker compose cp app:/data/app.db ./backup-$(date +%F).db
 docker compose start app
 ```
 
-**Upgrade** with `git pull && docker compose up -d --build`. Migrations run on
-boot and are idempotent; the volume is untouched.
+**Upgrade** by pulling a pre-built image (preferred) or, only on a machine with
+enough RAM: `git pull && docker compose up -d --build`. Migrations run on boot
+and are idempotent; the volume is untouched.
 
 ### Automate upgrades from GitHub Actions
 
-Pushing to `main` (or running the workflow by hand) SSHs into the box and runs
-the same upgrade. Create a deploy key on the EC2 instance if you have not
-already — a dedicated key used only by Actions is better than your laptop key:
+Pushing to `main` builds the image on GitHub runners, pushes it to
+`ghcr.io/<owner>/reddit-signals`, SSHs into EC2, pulls that tag, and restarts
+Compose. The box never runs `next build`.
+
+Create a deploy key on the EC2 instance if you have not already — a dedicated
+key used only by Actions is better than your laptop key:
 
 ```bash
 # on your laptop
@@ -136,15 +149,31 @@ Then in the GitHub repo → **Settings → Secrets and variables → Actions**, 
 | `EC2_USER` | `ubuntu` (Amazon Linux is usually `ec2-user`) |
 | `EC2_SSH_KEY` | full contents of `reddit-signals-deploy` (the private key) |
 | `EC2_APP_PATH` | `/home/ubuntu/reddit-signals` |
+| `GHCR_TOKEN` | PAT with `read:packages` (recommended for private images) |
 
 Optional: `EC2_SSH_PORT` if SSH is not on 22.
 
+After the first successful build, open **Packages** on the repo, click the
+`reddit-signals` package, and link it to the repository (and set visibility if
+needed). Without that, EC2 cannot pull a private package.
+
 The EC2 security group must allow inbound SSH from GitHub Actions runners
 (or from a fixed IP / bastion if you prefer a tighter rule). The `.env` file
-and Docker volumes stay on the box — Actions never sees your secrets.
+and Docker volumes stay on the box — Actions never sees your app secrets.
 
 Also make sure the clone on EC2 can `git fetch` without prompts (HTTPS with a
 read-only token, or a deploy key registered on the repo).
+
+If a manual `docker compose build` is already stuck on the box, stop it and free
+memory (it will not finish on 2 GB):
+
+```bash
+sudo kill $(pgrep -f 'next build') 2>/dev/null || true
+docker compose down
+# confirm: free -h   and   sudo dmesg | grep -i oom
+```
+
+Then rely on the Actions workflow to ship the image.
 
 **Reset somebody's password** without the UI:
 
