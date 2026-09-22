@@ -115,6 +115,37 @@ docker compose start app
 **Upgrade** with `git pull && docker compose up -d --build`. Migrations run on
 boot and are idempotent; the volume is untouched.
 
+### Automate upgrades from GitHub Actions
+
+Pushing to `main` (or running the workflow by hand) SSHs into the box and runs
+the same upgrade. Create a deploy key on the EC2 instance if you have not
+already — a dedicated key used only by Actions is better than your laptop key:
+
+```bash
+# on your laptop
+ssh-keygen -t ed25519 -f reddit-signals-deploy -N "" -C "github-actions-deploy"
+# append the public half to the EC2 user's authorized_keys
+ssh-copy-id -i reddit-signals-deploy.pub USER@EC2_HOST
+```
+
+Then in the GitHub repo → **Settings → Secrets and variables → Actions**, add:
+
+| Secret | Example |
+|---|---|
+| `EC2_HOST` | `ec2-xx-xx-xx-xx.compute.amazonaws.com` or the elastic IP |
+| `EC2_USER` | `ubuntu` (Amazon Linux is usually `ec2-user`) |
+| `EC2_SSH_KEY` | full contents of `reddit-signals-deploy` (the private key) |
+| `EC2_APP_PATH` | `/home/ubuntu/reddit-signals` |
+
+Optional: `EC2_SSH_PORT` if SSH is not on 22.
+
+The EC2 security group must allow inbound SSH from GitHub Actions runners
+(or from a fixed IP / bastion if you prefer a tighter rule). The `.env` file
+and Docker volumes stay on the box — Actions never sees your secrets.
+
+Also make sure the clone on EC2 can `git fetch` without prompts (HTTPS with a
+read-only token, or a deploy key registered on the repo).
+
 **Reset somebody's password** without the UI:
 
 ```bash
