@@ -8,8 +8,10 @@
 
 services:
   app:
-    build: .
+    # CI deploys by `docker pull` + `docker tag … reddit-signals:latest`.
+    # Local: `docker compose up -d --build` builds this same tag.
     image: reddit-signals:latest
+    build: .
     restart: unless-stopped
     env_file: [.env]
     environment:

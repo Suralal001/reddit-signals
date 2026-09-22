@@ -100,12 +100,15 @@ jobs:
             echo "==> logging in to GHCR"
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
+            # Pull the GHCR image directly, then retag as reddit-signals:latest so
+            # compose (which still references that local name) picks it up for
+            # both app and scheduler without needing APP_IMAGE in the yaml.
             echo "==> pulling ${APP_IMAGE}"
-            export APP_IMAGE
-            docker compose pull app
+            docker pull "${APP_IMAGE}"
+            docker tag "${APP_IMAGE}" reddit-signals:latest
 
             echo "==> restarting stack"
-            docker compose up -d
+            docker compose up -d --no-build
 
             echo "==> waiting for app health"
             for i in $(seq 1 30); do
